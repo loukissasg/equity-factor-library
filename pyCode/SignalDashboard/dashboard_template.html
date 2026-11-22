@@ -1,0 +1,642 @@
+<!doctype html>
+<!-- ABOUTME: Template for output/signal_dashboard.html; G_Dashboard.py injects the data and the Plotly tag. -->
+<!--
+  Edit the layout here, not in the generated file. G_Dashboard.py replaces two
+  placeholders: the PLOTLY tag (CDN link, or the whole library inlined with
+  embed-plotly) and the DATA json. The page computes no statistics: every
+  number comes from the Stage 3 tables, and H_CheckDashboard.py verifies that.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Anomaly Signal Dashboard</title>
+<style>
+  :root {
+    color-scheme: light;
+    --page: #f9f9f7;
+    --surface: #fcfcfb;
+    --text-primary: #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted: #898781;
+    --grid: #e1e0d9;
+    --axis: #c3c2b7;
+    --border: rgba(11,11,11,0.10);
+    --accent: #2a78d6;
+    --series-1: #2a78d6;
+    --series-2: #eb6834;
+    --series-3: #1baf7a;
+    --fill-1: rgba(42,120,214,0.14);
+    --band-in: rgba(42,120,214,0.10);
+    --band-pre: rgba(237,161,0,0.16);
+    --band-post: rgba(137,135,129,0.16);
+    --div-neg: #ec8a89;
+    --div-mid: #f0efec;
+    --div-pos: #6da7ec;
+    --good: #006300;
+    --bad: #b42d2d;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --page: #0d0d0d; --surface: #1a1a19;
+      --text-primary: #f0efec; --text-secondary: #c3c2b7; --text-muted: #898781;
+      --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
+      --accent: #3987e5;
+      --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70;
+      --fill-1: rgba(57,135,229,0.20);
+      --band-in: rgba(57,135,229,0.16); --band-pre: rgba(201,133,0,0.20); --band-post: rgba(137,135,129,0.18);
+      --div-neg: #a33a3a; --div-mid: #383835; --div-pos: #1c5cab;
+      --good: #0ca30c; --bad: #e66767;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19;
+    --text-primary: #f0efec; --text-secondary: #c3c2b7; --text-muted: #898781;
+    --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
+    --accent: #3987e5;
+    --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70;
+    --fill-1: rgba(57,135,229,0.20);
+    --band-in: rgba(57,135,229,0.16); --band-pre: rgba(201,133,0,0.20); --band-post: rgba(137,135,129,0.18);
+    --div-neg: #a33a3a; --div-mid: #383835; --div-pos: #1c5cab;
+    --good: #0ca30c; --bad: #e66767;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--page); color: var(--text-primary);
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  .wrap { max-width: 1240px; margin: 0 auto; padding: 0 16px 48px; }
+  header.top {
+    display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; justify-content: space-between;
+    padding: 28px 0 12px; border-bottom: 1px solid var(--border);
+  }
+  h1 { font-size: 26px; margin: 0 0 4px; font-weight: 650; letter-spacing: -0.01em; }
+  h2 { font-size: 20px; margin: 0 0 4px; font-weight: 650; }
+  h3 { font-size: 15px; margin: 18px 0 6px; font-weight: 650; }
+  .sub { color: var(--text-secondary); margin: 0; }
+  .muted { color: var(--text-muted); font-size: 13px; }
+  nav.toc { display: flex; flex-wrap: wrap; gap: 4px 16px; padding: 10px 0; font-size: 14px; }
+  nav.toc a { color: var(--text-secondary); text-decoration: none; }
+  nav.toc a:hover { color: var(--accent); }
+  section { margin-top: 28px; }
+  .section-head { margin-bottom: 12px; }
+  .card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    padding: 16px; min-width: 0;
+  }
+  .grid-2 { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 16px; align-items: start; }
+  .grid-2e { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+  .stack > * + * { margin-top: 16px; }
+  @media (max-width: 900px) { .grid-2, .grid-2e { grid-template-columns: minmax(0, 1fr); } }
+
+  button, select {
+    font: inherit; font-size: 14px; color: var(--text-primary); background: var(--surface);
+    border: 1px solid var(--border); border-radius: 8px; padding: 6px 12px; cursor: pointer;
+  }
+  button:hover, select:hover { border-color: var(--axis); }
+  button:focus-visible, select:focus-visible, th button:focus-visible, a:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 2px;
+  }
+  .controls { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin-bottom: 12px; }
+  label.check { display: inline-flex; gap: 6px; align-items: center; font-size: 14px; color: var(--text-secondary); }
+
+  .table-scroll { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+  th, td { padding: 7px 10px; text-align: left; border-bottom: 1px solid var(--grid); vertical-align: top; }
+  th { color: var(--text-secondary); font-weight: 600; white-space: nowrap; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  th button { all: unset; cursor: pointer; display: inline-flex; gap: 4px; align-items: center; }
+  th button .arrow { color: var(--text-muted); font-size: 11px; width: 10px; }
+  tbody tr.clickable { cursor: pointer; }
+  tbody tr.clickable:hover { background: var(--band-in); }
+  tbody tr.selected { background: var(--band-in); }
+  .pos { color: var(--good); } .neg { color: var(--bad); }
+  .na { color: var(--text-muted); }
+  .badge { display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--text-secondary); white-space: nowrap; }
+
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+  .tile { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
+  .tile .k { font-size: 12.5px; color: var(--text-secondary); }
+  .tile .v { font-size: 22px; font-weight: 600; margin-top: 2px; }
+  .tile .d { font-size: 12px; color: var(--text-muted); }
+
+  .signal-card { max-height: 1180px; overflow-y: auto; }
+  .signal-card .oneliner { font-style: italic; color: var(--text-secondary); margin: 4px 0 10px; }
+  .signal-card dl { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; margin: 8px 0 4px; font-size: 13.5px; }
+  .signal-card dt { color: var(--text-secondary); }
+  .signal-card dd { margin: 0; }
+  .signal-card ul { margin: 4px 0 0; padding-left: 18px; }
+  .signal-card li { margin: 3px 0; font-size: 14px; }
+  .signal-card .refs li { font-size: 12.5px; color: var(--text-secondary); }
+  a.ref { font-size: 11px; color: var(--accent); text-decoration: none; vertical-align: super; }
+  .unsure { border-left: 3px solid var(--axis); padding-left: 10px; }
+
+  .chart { width: 100%; min-height: 300px; }
+  .chart.tall { min-height: 420px; }
+  .chart-note { font-size: 12.5px; color: var(--text-muted); margin-top: 6px; }
+  .swatch { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -1px; margin-right: 4px; border: 1px solid var(--border); }
+  .chart-fallback { color: var(--text-muted); font-size: 13px; padding: 20px; border: 1px dashed var(--axis); border-radius: 8px; }
+
+  .howto { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
+  .howto h3 { margin-top: 0; }
+  .howto p { margin: 0; font-size: 14px; color: var(--text-secondary); }
+  footer { margin-top: 36px; padding-top: 14px; border-top: 1px solid var(--border); font-size: 13px; color: var(--text-secondary); }
+  footer p { margin: 6px 0; }
+  .caveat { font-weight: 600; color: var(--text-primary); }
+</style>
+__PLOTLY_TAG__
+</head>
+<body>
+<div class="wrap">
+
+<header class="top">
+  <div>
+    <h1>Anomaly Signal Dashboard</h1>
+    <p class="sub" id="subtitle"></p>
+  </div>
+  <button id="theme-toggle" type="button" aria-label="Switch colour theme">Theme: auto</button>
+</header>
+<nav class="toc" aria-label="Sections">
+  <a href="#overview">1 Overview</a><a href="#signal">2 Signal detail</a><a href="#compare">3 Comparison</a>
+  <a href="#phases">4 Market phases</a><a href="#howto">5 How to read this</a><a href="#about">Data &amp; caveats</a>
+</nav>
+
+<!-- 1. OVERVIEW -->
+<section id="overview">
+  <div class="section-head">
+    <h2>1. Overview</h2>
+    <p class="muted">Click a column header to sort, click a row to open the signal below. Returns are long-short, before trading costs.</p>
+  </div>
+  <div class="card table-scroll"><table id="overview-table"></table></div>
+  <p class="chart-note" id="overview-note"></p>
+</section>
+
+<!-- 2. SIGNAL DETAIL -->
+<section id="signal">
+  <div class="section-head">
+    <h2>2. Signal detail</h2>
+    <div class="controls">
+      <label for="signal-select" class="check">Signal</label>
+      <select id="signal-select"></select>
+    </div>
+  </div>
+  <div class="tiles" id="signal-tiles"></div>
+  <div class="grid-2" style="margin-top:16px">
+    <div class="card signal-card" id="signal-card"></div>
+    <div class="stack">
+      <div class="card">
+        <h3 style="margin-top:0">Growth of $1 in the long-short portfolio (log scale)</h3>
+        <div class="chart tall" id="chart-wealth"></div>
+        <p class="chart-note" id="band-legend"></p>
+      </div>
+      <div class="card">
+        <h3 style="margin-top:0">Drawdown from previous peak</h3>
+        <div class="chart" id="chart-drawdown"></div>
+      </div>
+      <div class="card">
+        <h3 style="margin-top:0" id="rolling-title">Rolling Sharpe ratio</h3>
+        <div class="chart" id="chart-rolling"></div>
+      </div>
+    </div>
+  </div>
+  <div class="grid-2e" style="margin-top:16px">
+    <div class="card table-scroll">
+      <h3 style="margin-top:0">Returns by period (McLean-Pontiff split)</h3>
+      <table id="period-table"></table>
+      <p class="chart-note" id="period-note"></p>
+    </div>
+    <div class="card table-scroll">
+      <h3 style="margin-top:0">Recent performance</h3>
+      <table id="recent-table"></table>
+    </div>
+  </div>
+  <div class="card table-scroll" style="margin-top:16px">
+    <h3 style="margin-top:0">Factor regressions: alpha and loadings (t-stats in brackets)</h3>
+    <table id="reg-table"></table>
+    <p class="chart-note" id="reg-note"></p>
+  </div>
+</section>
+
+<!-- 3. COMPARISON -->
+<section id="compare">
+  <div class="section-head">
+    <h2>3. Comparison</h2>
+  </div>
+  <div class="card">
+    <h3 style="margin-top:0">Growth of $1, all signals (log scale)</h3>
+    <div class="controls">
+      <button type="button" id="show-all">Show all</button>
+      <button type="button" id="show-none">Hide all</button>
+      <label class="check"><input type="checkbox" id="common-start"> Start all at the common date</label>
+    </div>
+    <div class="chart tall" id="chart-compare"></div>
+    <p class="chart-note">Click a legend entry to toggle a signal, double-click to show only that one.
+      Colour = SignalDoc data category (<span class="swatch" style="background:var(--series-1)"></span>Price,
+      <span class="swatch" style="background:var(--series-2)"></span>Accounting,
+      <span class="swatch" style="background:var(--series-3)"></span>Trading); line style tells signals apart within a category.
+      By default each line starts at $1 in its own first month.</p>
+  </div>
+  <div class="grid-2e" style="margin-top:16px">
+    <div class="card">
+      <h3 style="margin-top:0">Correlation of long-short returns</h3>
+      <div class="chart tall" id="chart-corr"></div>
+      <p class="chart-note" id="corr-note"></p>
+    </div>
+    <div class="card">
+      <h3 style="margin-top:0">Mean return: in-sample vs post-publication</h3>
+      <div class="chart tall" id="chart-decay"></div>
+      <p class="chart-note">% per month. The label above each pair is the post-publication decline relative to in-sample (negative = got stronger).</p>
+    </div>
+  </div>
+</section>
+
+<!-- 4. MARKET PHASES -->
+<section id="phases">
+  <div class="section-head">
+    <h2>4. Market phases</h2>
+    <p class="muted">Cumulative (compounded) long-short return in each phase. The market row is Ken French's total market return (MKT-RF + RF) for context.</p>
+  </div>
+  <div class="card">
+    <div class="chart tall" id="chart-phases"></div>
+    <p class="chart-note">Colour is capped at ±100%; the number in each cell is the actual value.</p>
+  </div>
+  <div class="grid-2e" style="margin-top:16px">
+    <div class="card table-scroll"><h3 style="margin-top:0">Phase returns (table)</h3><table id="phase-table"></table></div>
+    <div class="card table-scroll"><h3 style="margin-top:0">Best and worst 12-month windows</h3><table id="extreme-table"></table></div>
+  </div>
+</section>
+
+<!-- 5. HOW TO READ -->
+<section id="howto">
+  <div class="section-head"><h2>5. How to read this</h2></div>
+  <div class="card howto">
+    <div><h3>Long-short return</h3><p>Return of the top portfolio minus the bottom portfolio, signed so it is long the side the original paper says earns more. It costs nothing to set up (the short pays for the long), so it is already an excess return.</p></div>
+    <div><h3>t-stat</h3><p>Mean divided by its standard error: how many standard errors the average is away from zero. Above about 2 is unlikely to be luck at the 5% level; with hundreds of signals tested, a bar of 3 is safer.</p></div>
+    <div><h3>Sharpe ratio</h3><p>Average return per unit of volatility, annualised (monthly mean / monthly std × √12). The US market has historically been around 0.4-0.5, which is a useful yardstick.</p></div>
+    <div><h3>Alpha</h3><p>The average return left over after a regression on known factors (market, size, value, ...). A significant alpha means the signal is not just a repackaging of those factors.</p></div>
+    <div><h3>Drawdown</h3><p>How far the $1 investment has fallen below its previous high. The maximum drawdown is the worst such fall: the pain you would have had to sit through.</p></div>
+  </div>
+</section>
+
+<footer id="about"></footer>
+</div>
+
+<script id="dashboard-data" type="application/json">__DATA__</script>
+<script>
+"use strict";
+const D = JSON.parse(document.getElementById("dashboard-data").textContent);
+const SIGNALS = D.meta.signals;
+const HAS_PLOTLY = typeof window.Plotly !== "undefined";
+
+// ---------- small helpers ----------
+const $ = (id) => document.getElementById(id);
+const isNum = (x) => typeof x === "number" && isFinite(x);
+function fmt(x, d = 2, suffix = "") {
+  return isNum(x) ? x.toFixed(d) + suffix : '<span class="na" title="missing">&mdash;</span>';
+}
+function signed(x, d = 2, suffix = "") {
+  if (!isNum(x)) return fmt(x);
+  const cls = x > 0 ? "pos" : x < 0 ? "neg" : "";
+  return `<span class="${cls}">${x > 0 ? "+" : ""}${x.toFixed(d)}${suffix}</span>`;
+}
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const byKey = (rows, key) => Object.fromEntries(rows.map((r) => [r[key], r]));
+const FULL = byKey(D.full, "signal");
+const INFO = D.info;
+const ALPHA = byKey(D.alpha_summary, "signal");
+const PERIODS = D.periods;
+const inSampleRow = (s) => PERIODS.find((r) => r.signal === s && r.period === "in-sample");
+
+// ---------- theme toggle (auto -> light -> dark); remembered per viewer if storage works ----------
+const THEMES = ["auto", "light", "dark"];
+let theme = "auto";
+try { theme = localStorage.getItem("dash-theme") || "auto"; } catch (e) { /* storage blocked */ }
+function applyTheme() {
+  if (theme === "auto") document.documentElement.removeAttribute("data-theme");
+  else document.documentElement.setAttribute("data-theme", theme);
+  $("theme-toggle").textContent = "Theme: " + theme;
+  renderCharts();
+}
+$("theme-toggle").addEventListener("click", () => {
+  theme = THEMES[(THEMES.indexOf(theme) + 1) % THEMES.length];
+  try { localStorage.setItem("dash-theme", theme); } catch (e) { /* ignore */ }
+  applyTheme();
+});
+window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { if (theme === "auto") renderCharts(); });
+
+// ---------- Plotly base layout, read from the CSS tokens so both themes work ----------
+function baseLayout(extra = {}) {
+  const ax = { gridcolor: cssVar("--grid"), linecolor: cssVar("--axis"), zeroline: false,
+               tickfont: { color: cssVar("--text-muted") }, automargin: true,
+               showspikes: true, spikemode: "across", spikethickness: 1, spikecolor: cssVar("--axis"), spikedash: "solid" };
+  return Object.assign({
+    paper_bgcolor: cssVar("--surface"), plot_bgcolor: cssVar("--surface"),
+    font: { family: 'system-ui, -apple-system, "Segoe UI", sans-serif', size: 12, color: cssVar("--text-secondary") },
+    margin: { l: 56, r: 16, t: 12, b: 40 }, hovermode: "x unified",
+    hoverlabel: { bgcolor: cssVar("--surface"), bordercolor: cssVar("--axis"), font: { color: cssVar("--text-primary") } },
+    xaxis: Object.assign({}, ax), yaxis: Object.assign({}, ax, { showspikes: false }),
+    showlegend: false,
+  }, extra);
+}
+const PLOT_CONFIG = { displaylogo: false, responsive: true, modeBarButtonsToRemove: ["lasso2d", "select2d", "autoScale2d"] };
+function plot(id, traces, layout) {
+  if (!HAS_PLOTLY) {
+    $(id).innerHTML = '<div class="chart-fallback">Charts need Plotly, which loads from the internet (jsDelivr CDN). The tables on this page work offline. For a fully offline file, rebuild with <code>python SignalDashboard/G_Dashboard.py --embed-plotly</code>.</div>';
+    return;
+  }
+  Plotly.react(id, traces, layout, PLOT_CONFIG);
+}
+
+// ---------- 1. Overview table (sortable) ----------
+const OVERVIEW_COLS = [
+  { key: "signal", label: "Signal", get: (s) => s },
+  { key: "name", label: "Name", get: (s) => INFO[s].full_name },
+  { key: "cat", label: "Category", get: (s) => INFO[s].economic_category },
+  { key: "paper", label: "Original paper", get: (s) => `${INFO[s].authors} (${INFO[s].year})` },
+  { key: "mean", label: "Mean % p.a.", num: true, get: (s) => FULL[s].mean_annual, show: (v) => fmt(v, 2) },
+  { key: "t", label: "t-stat", num: true, get: (s) => FULL[s].tstat, show: (v) => fmt(v, 2) },
+  { key: "sharpe", label: "Sharpe", num: true, get: (s) => FULL[s].sharpe_annual, show: (v) => fmt(v, 2) },
+  { key: "decline", label: "Post-pub. decline", num: true, get: (s) => inSampleRow(s)["decline_post-publication_pct"], show: (v) => fmt(v, 0, "%") },
+  { key: "alpha_t", label: "FF5+UMD α t-stat", num: true, get: (s) => ALPHA[s]["t_alpha_FF5+UMD"], show: (v) => fmt(v, 2) },
+];
+let sortState = { key: null, dir: 1 };
+function renderOverview() {
+  const table = $("overview-table");
+  const head = "<thead><tr>" + OVERVIEW_COLS.map((c) => {
+    const active = sortState.key === c.key;
+    const aria = active ? (sortState.dir === 1 ? "ascending" : "descending") : "none";
+    const arrow = active ? (sortState.dir === 1 ? "▲" : "▼") : "";
+    return `<th class="${c.num ? "num" : ""}" aria-sort="${aria}"><button type="button" data-key="${c.key}">${esc(c.label)}<span class="arrow">${arrow}</span></button></th>`;
+  }).join("") + "</tr></thead>";
+  let rows = SIGNALS.slice();
+  if (sortState.key) {
+    const col = OVERVIEW_COLS.find((c) => c.key === sortState.key);
+    rows.sort((a, b) => {
+      const va = col.get(a), vb = col.get(b);
+      if (va == null) return 1; if (vb == null) return -1;   // missing values always last
+      return (va > vb ? 1 : va < vb ? -1 : 0) * sortState.dir;
+    });
+  }
+  const body = "<tbody>" + rows.map((s) => `<tr class="clickable${s === currentSignal ? " selected" : ""}" data-signal="${s}" tabindex="0">` +
+    OVERVIEW_COLS.map((c) => {
+      const v = c.get(s);
+      const cell = c.show ? c.show(v) : (c.key === "signal" ? `<strong>${esc(v)}</strong>` : esc(v));
+      return `<td class="${c.num ? "num" : ""}">${cell}</td>`;
+    }).join("") + "</tr>").join("") + "</tbody>";
+  table.innerHTML = head + body;
+  table.querySelectorAll("th button").forEach((b) => b.addEventListener("click", () => {
+    const key = b.dataset.key;
+    sortState = { key, dir: sortState.key === key ? -sortState.dir : (OVERVIEW_COLS.find((c) => c.key === key).num ? -1 : 1) };
+    renderOverview();
+  }));
+  table.querySelectorAll("tbody tr").forEach((tr) => {
+    const open = () => { selectSignal(tr.dataset.signal); $("signal").scrollIntoView({ behavior: "smooth" }); };
+    tr.addEventListener("click", open);
+    tr.addEventListener("keydown", (e) => { if (e.key === "Enter") open(); });
+  });
+  $("overview-note").innerHTML = `Mean, t-stat and Sharpe: full sample of each signal (from its first month to ${D.meta.data_end}).
+    Decline: post-publication mean vs in-sample mean (McLean-Pontiff 2016 style). α t-stat: regression on Ken French's FF5 + UMD, ${D.meta.reg_window}.`;
+}
+
+// ---------- 2. Signal detail ----------
+let currentSignal = SIGNALS[0];
+function linkRefs(text) {
+  return esc(text).replace(/\[([A-Za-z]+\d{4}|OAP)\]/g, (m, k) => `<a class="ref" href="#ref-${currentSignal}-${k}">${k}</a>`);
+}
+function renderCard(s) {
+  const c = D.cards.find((x) => x.signal === s);
+  const list = (items) => items && items.length ? "<ul>" + items.map((i) => `<li>${linkRefs(i)}</li>`).join("") + "</ul>" : "";
+  let html = `<h2>${esc(c.signal)}: ${esc(c.full_name)}</h2>
+    <p class="oneliner">${esc(c.in_one_line)}</p>
+    <div><strong>Paper:</strong> ${esc(c.paper)}</div>
+    <dl>${Object.entries(c.facts).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl>
+    <h3>What it measures</h3>${list(c.measures)}
+    <h3>Long and short side</h3>${list([c.long_short])}
+    <h3>Economic story <span class="badge">${esc(c.story_type)}</span></h3>${list(c.story)}`;
+  if (c.follow_up.length) html += `<h3>Follow-up evidence</h3>${list(c.follow_up)}`;
+  html += `<h3>How it could be used in practice</h3>${list(c.practice)}
+    <p style="font-size:14px;margin:6px 0 0"><strong>Turnover: ${esc(c.facts["Turnover / trading costs"])}.</strong> ${linkRefs(c.turnover_note)}</p>
+    <h3>Caveats</h3>${list(c.caveats)}`;
+  if (c.not_verified.length) html += `<h3>Not verified</h3><div class="unsure">${list(c.not_verified)}</div>`;
+  html += `<h3>References</h3><ul class="refs">${c.references.map((k) => `<li id="ref-${s}-${k}">[${k}] ${esc(D.references[k])}</li>`).join("")}</ul>`;
+  $("signal-card").innerHTML = html;
+  $("signal-card").scrollTop = 0;
+}
+function renderTiles(s) {
+  const f = FULL[s];
+  const r12 = D.recent.find((r) => r.signal === s && r.window === "last 12 months");
+  const tiles = [
+    ["Mean return", fmt(f.mean_annual, 1, "% p.a."), `t-stat ${fmt(f.tstat, 2)}, ${f.months} months`],
+    ["Sharpe ratio", fmt(f.sharpe_annual, 2), `volatility ${fmt(f.vol_annual, 1, "% p.a.")}`],
+    ["Max drawdown", fmt(f.max_drawdown_pct, 1, "%"), `${f.dd_peak} → ${f.dd_trough}, recovered: ${f.dd_recovered}`],
+    ["Worst month", fmt(f.worst_month_pct, 1, "%"), f.worst_month],
+    ["Positive months", fmt(f.share_positive_pct, 0, "%"), `${f.first} to ${f.last}`],
+    ["Last 12 months", fmt(r12.cumulative_pct, 1, "%"), `${r12.start} to ${r12.end}`],
+  ];
+  $("signal-tiles").innerHTML = tiles.map(([k, v, d]) => `<div class="tile"><div class="k">${k}</div><div class="v">${v}</div><div class="d">${esc(d)}</div></div>`).join("");
+}
+// Log-axis ticks with readable "$" labels: 1-2-5 steps over a narrow range, powers of ten
+// over a wide one (Plotly's own minor labels like "2" and "5" are easy to misread).
+function logAxis(seriesList) {
+  const ys = seriesList.flat().filter((v) => isNum(v) && v > 0);
+  const lo = Math.floor(Math.log10(Math.min(...ys))), hi = Math.ceil(Math.log10(Math.max(...ys)));
+  const steps = hi - lo <= 3 ? [1, 2, 5] : [1];
+  const vals = [];
+  for (let e = lo; e <= hi; e++) steps.forEach((m) => vals.push(m * Math.pow(10, e)));
+  const label = (v) => v >= 1e12 ? `$${v / 1e12}T` : v >= 1e9 ? `$${v / 1e9}B` : v >= 1e6 ? `$${v / 1e6}M` : v >= 1e3 ? `$${v / 1e3}k` : `$${+v.toPrecision(2)}`;
+  return { type: "log", tickvals: vals, ticktext: vals.map(label) };
+}
+const BAND_COLORS = { "in-sample": "--band-in", "pre-publication": "--band-pre", "post-publication": "--band-post" };
+const monthStart = (ym) => ym + "-01";
+function monthEndStr(ym) { const [y, m] = ym.split("-").map(Number); const d = new Date(Date.UTC(y, m, 0)); return d.toISOString().slice(0, 10); }
+function renderSignalCharts(s) {
+  const ts = D.timeseries[s];
+  const rows = PERIODS.filter((r) => r.signal === s && r.months > 0 && BAND_COLORS[r.period]);
+  const shapes = rows.map((r) => ({ type: "rect", xref: "x", yref: "paper", x0: monthStart(r.start), x1: monthEndStr(r.end), y0: 0, y1: 1,
+                                    fillcolor: cssVar(BAND_COLORS[r.period]), line: { width: 0 }, layer: "below" }));
+  const line1 = { color: cssVar("--series-1"), width: 2 };
+  plot("chart-wealth", [{ x: ts.date, y: ts.wealth, type: "scatter", mode: "lines", line: line1, name: s,
+                          hovertemplate: "$%{y:,.2f}<extra></extra>" }],
+       baseLayout({ shapes, yaxis: Object.assign(baseLayout().yaxis, logAxis([ts.wealth])) }));
+  $("band-legend").innerHTML = rows.map((r) => `<span class="swatch" style="background:${cssVar(BAND_COLORS[r.period])}"></span>${esc(r.period)} ${r.start} to ${r.end}`).join(" &nbsp; ")
+    + (PERIODS.some((r) => r.signal === s && r.period === "pre-sample" && r.months > 0) ? " &nbsp; (unshaded = before the paper's sample)" : "");
+  plot("chart-drawdown", [{ x: ts.date, y: ts.drawdown_pct, type: "scatter", mode: "lines", fill: "tozeroy",
+                            fillcolor: cssVar("--fill-1"), line: line1, name: "Drawdown", hovertemplate: "%{y:.1f}%<extra></extra>" }],
+       baseLayout({ shapes, yaxis: Object.assign(baseLayout().yaxis, { ticksuffix: "%" }) }));
+  plot("chart-rolling", [{ x: ts.date, y: ts.rolling_sharpe_36m, type: "scatter", mode: "lines", line: line1, name: "Rolling Sharpe",
+                           connectgaps: false, hovertemplate: "%{y:.2f}<extra></extra>" }],
+       baseLayout({ shapes: shapes.concat([{ type: "line", xref: "paper", x0: 0, x1: 1, yref: "y", y0: 0, y1: 0, line: { color: cssVar("--axis"), width: 1 } }]) }));
+  $("rolling-title").textContent = `Rolling ${D.meta.rolling_sharpe_months}-month Sharpe ratio (annualised)`;
+}
+function renderPeriodTable(s) {
+  const order = ["pre-sample", "in-sample", "pre-publication", "post-publication"];
+  const rows = order.map((p) => PERIODS.find((r) => r.signal === s && r.period === p));
+  $("period-table").innerHTML = `<thead><tr><th>Period</th><th>Months</th><th class="num">N</th><th class="num">Mean %/mo</th><th class="num">t-stat</th><th class="num">Sharpe</th></tr></thead><tbody>` +
+    rows.map((r) => r.months > 0
+      ? `<tr><td>${esc(r.period)}</td><td>${r.start} to ${r.end}</td><td class="num">${r.months}</td><td class="num">${fmt(r.mean_monthly, 2)}</td><td class="num">${fmt(r.tstat, 2)}</td><td class="num">${fmt(r.sharpe_annual, 2)}</td></tr>`
+      : `<tr><td>${esc(r.period)}</td><td class="na" colspan="5">no months: the data start at or after the paper's sample start</td></tr>`).join("") + "</tbody>";
+  const ins = inSampleRow(s);
+  $("period-note").innerHTML = `Decline vs in-sample: pre-publication ${fmt(ins["decline_pre-publication_pct"], 0, "%")}, post-publication ${fmt(ins["decline_post-publication_pct"], 0, "%")}.
+    Paper's reported return (SignalDoc): ${isNum(ins.paper_return_signaldoc) ? ins.paper_return_signaldoc.toFixed(2) + "% per month (definition varies by paper)" : "not reported as a portfolio return (the paper's test is a regression or is defined differently)"}.`;
+}
+function renderRecentTable(s) {
+  const rows = D.recent.filter((r) => r.signal === s);
+  $("recent-table").innerHTML = `<thead><tr><th>Window</th><th>Months</th><th class="num">Cumulative</th><th class="num">Mean % p.a.</th><th class="num">t-stat</th><th class="num">Sharpe</th></tr></thead><tbody>` +
+    rows.map((r) => `<tr><td>${esc(r.window)}</td><td>${r.start} to ${r.end}</td><td class="num">${signed(r.cumulative_pct, 1, "%")}</td><td class="num">${fmt(r.mean_annual, 1)}</td><td class="num">${fmt(r.tstat, 2)}</td><td class="num">${fmt(r.sharpe_annual, 2)}</td></tr>`).join("") + "</tbody>";
+}
+const FACTOR_LABELS = { mkt_rf_mine: "MKT-RF*", smb_mine: "SMB*", hml_mine: "HML*", mkt_rf: "MKT-RF", smb: "SMB", hml: "HML", rmw: "RMW", cma: "CMA", umd: "UMD", qmj: "QMJ" };
+function renderRegTable(s) {
+  const rows = D.regressions.filter((r) => r.signal === s);
+  const factors = Object.keys(FACTOR_LABELS);
+  const cell = (b, t) => isNum(b) ? `${b.toFixed(2)} <span class="muted">(${t.toFixed(1)})</span>` : "";
+  $("reg-table").innerHTML = `<thead><tr><th>Model</th><th class="num">α %/mo</th><th class="num">α % p.a.</th><th class="num">t(α)</th>` +
+    factors.map((f) => `<th class="num">${FACTOR_LABELS[f]}</th>`).join("") + `<th class="num">R²</th><th class="num">N</th></tr></thead><tbody>` +
+    rows.map((r) => `<tr><td><strong>${esc(r.model)}</strong></td><td class="num">${fmt(r.alpha_monthly, 2)}</td><td class="num">${fmt(r.alpha_annual, 1)}</td>
+      <td class="num"><strong>${fmt(r.t_alpha, 2)}</strong></td>` + factors.map((f) => `<td class="num">${cell(r["beta_" + f], r["t_" + f])}</td>`).join("") +
+      `<td class="num">${fmt(r.r2, 2)}</td><td class="num">${r.months}</td></tr>`).join("") + "</tbody>";
+  const a = ALPHA[s];
+  const verdict = a["survives_FF5+UMD+QMJ_t>3"] ? "survives all four models, even at t > 3"
+    : a["survives_FF5+UMD+QMJ_t>1.96"] ? "survives FF5 + UMD + QMJ at t > 1.96, but not at the stricter t > 3"
+    : a["survives_FF5+UMD_t>1.96"] ? "survives FF5 + UMD but not once QMJ is added"
+    : "does not survive FF5 + UMD";
+  $("reg-note").innerHTML = `Window ${rows[0].start} to ${rows[0].end}, the same for all four models (mean LS return in this window: ${fmt(rows[0].mean_monthly_same_window, 2)}% per month).
+    * = our replicated factors (CAPM and FF3); the others are Ken French's (FF5, UMD) and AQR's (QMJ). Plain OLS t-stats.
+    <strong>Verdict: ${esc(s)} ${verdict}.</strong>`;
+}
+function selectSignal(s) {
+  currentSignal = s;
+  $("signal-select").value = s;
+  renderTiles(s); renderCard(s); renderSignalCharts(s); renderPeriodTable(s); renderRecentTable(s); renderRegTable(s);
+  renderOverview();
+}
+
+// ---------- 3. Comparison ----------
+const CAT_COLOR = { Price: "--series-1", Accounting: "--series-2", Trading: "--series-3" };
+const DASHES = ["solid", "dash", "dot", "dashdot", "longdash"];
+function styleFor(s) {
+  // Composite encoding: hue = data category (3 validated hues), dash = position within category.
+  const cat = INFO[s].data_category;
+  const sameCat = SIGNALS.filter((x) => INFO[x].data_category === cat);
+  return { color: cssVar(CAT_COLOR[cat] || "--series-1"), width: 2, dash: DASHES[sameCat.indexOf(s) % DASHES.length] };
+}
+let hidden = new Set();
+function renderCompare() {
+  const common = $("common-start").checked;
+  const base = D.meta.correlation_start;               // first month all 10 signals exist
+  const baseDate = monthEndStr(prevMonth(base));         // the $1 starting point
+  const traces = SIGNALS.map((s) => {
+    const ts = D.timeseries[s];
+    let x = ts.date, y = ts.wealth;
+    if (common) {   // rebase: wealth(t) / wealth(start), from the common start onwards
+      const i0 = ts.date.indexOf(baseDate);
+      x = ts.date.slice(i0); y = ts.wealth.slice(i0).map((w) => w / ts.wealth[i0]);
+    }
+    return { x, y, type: "scatter", mode: "lines", name: s, line: styleFor(s),
+             visible: hidden.has(s) ? "legendonly" : true, hovertemplate: `${s}: $%{y:,.2f}<extra></extra>` };
+  });
+  plot("chart-compare", traces, baseLayout({
+    showlegend: true, legend: { orientation: "h", y: -0.12, font: { color: cssVar("--text-secondary") } },
+    margin: { l: 60, r: 16, t: 12, b: 20 },
+    yaxis: Object.assign(baseLayout().yaxis, logAxis(traces.filter((t) => t.visible === true).map((t) => t.y).concat([[1]]))),
+  }));
+  if (HAS_PLOTLY) {
+    const el = $("chart-compare");
+    el.removeAllListeners && el.removeAllListeners("plotly_restyle");
+    el.on("plotly_restyle", () => { hidden = new Set(el.data.filter((t) => t.visible === "legendonly").map((t) => t.name)); });
+  }
+}
+function prevMonth(ym) { let [y, m] = ym.split("-").map(Number); m -= 1; if (m === 0) { m = 12; y -= 1; } return `${y}-${String(m).padStart(2, "0")}`; }
+function divergingScale() {
+  return [[0, cssVar("--div-neg")], [0.5, cssVar("--div-mid")], [1, cssVar("--div-pos")]];
+}
+function renderCorr() {
+  const z = D.corr.values;
+  plot("chart-corr", [{ type: "heatmap", z, x: D.corr.labels, y: D.corr.labels, zmin: -1, zmax: 1, zmid: 0,
+                        colorscale: divergingScale(), xgap: 2, ygap: 2, texttemplate: "%{z:.2f}",
+                        textfont: { size: 10, color: cssVar("--text-primary") },
+                        hovertemplate: "%{y} vs %{x}: %{z:.2f}<extra></extra>", colorbar: { thickness: 10, outlinewidth: 0 } }],
+       baseLayout({ hovermode: "closest", margin: { l: 130, r: 10, t: 10, b: 110 },
+                    xaxis: { tickangle: -45, tickfont: { color: cssVar("--text-secondary") }, showgrid: false },
+                    yaxis: { autorange: "reversed", tickfont: { color: cssVar("--text-secondary") }, showgrid: false } }));
+  $("corr-note").textContent = `Common sample ${D.meta.correlation_start} to ${D.meta.correlation_end} (${D.meta.correlation_months} months, all 10 signals available). Blue = move together, red = move opposite.`;
+}
+function renderDecay() {
+  const ins = SIGNALS.map((s) => PERIODS.find((r) => r.signal === s && r.period === "in-sample"));
+  const post = SIGNALS.map((s) => PERIODS.find((r) => r.signal === s && r.period === "post-publication"));
+  const hov = (rows, label) => rows.map((r) => `${label} ${r.start} to ${r.end}<br>mean ${isNum(r.mean_monthly) ? r.mean_monthly.toFixed(2) : "n/a"}% per month, t = ${isNum(r.tstat) ? r.tstat.toFixed(2) : "n/a"}`);
+  const top = SIGNALS.map((s, i) => Math.max(ins[i].mean_monthly || 0, post[i].mean_monthly || 0));
+  plot("chart-decay", [
+    { type: "bar", name: "In-sample", x: SIGNALS, y: ins.map((r) => r.mean_monthly), marker: { color: cssVar("--series-1") }, hovertext: hov(ins, "In-sample"), hoverinfo: "text" },
+    { type: "bar", name: "Post-publication", x: SIGNALS, y: post.map((r) => r.mean_monthly), marker: { color: cssVar("--series-2") }, hovertext: hov(post, "Post-publication"), hoverinfo: "text" },
+  ], baseLayout({
+    barmode: "group", bargap: 0.3, bargroupgap: 0.08, hovermode: "closest", showlegend: true,
+    legend: { orientation: "h", y: 1.08, font: { color: cssVar("--text-secondary") } },
+    margin: { l: 50, r: 10, t: 30, b: 110 },
+    xaxis: { tickangle: -45, tickfont: { color: cssVar("--text-secondary") }, showgrid: false, linecolor: cssVar("--axis") },
+    yaxis: Object.assign(baseLayout().yaxis, { ticksuffix: "%" }),
+    annotations: SIGNALS.map((s, i) => ({ x: s, y: top[i], yshift: 12, showarrow: false, font: { size: 10, color: cssVar("--text-muted") },
+                                          text: isNum(ins[i]["decline_post-publication_pct"]) ? `${ins[i]["decline_post-publication_pct"] > 0 ? "−" : "+"}${Math.abs(ins[i]["decline_post-publication_pct"]).toFixed(0)}%` : "n/a" })),
+  }));
+}
+
+// ---------- 4. Market phases ----------
+function renderPhases() {
+  const phases = D.meta.market_phases.map((p) => p.name);
+  const series = SIGNALS.concat(["Market (total return)"]);
+  const get = (s, p) => D.phases.find((r) => r.series === s && r.phase === p);
+  const z = series.map((s) => phases.map((p) => get(s, p).cumulative_pct));
+  const zc = z.map((row) => row.map((v) => (isNum(v) ? Math.max(-100, Math.min(100, v)) : null)));
+  plot("chart-phases", [{ type: "heatmap", z: zc, x: phases.map((p, i) => `${p}<br>${D.meta.market_phases[i].start} to ${D.meta.market_phases[i].end}`), y: series,
+                          customdata: z, zmin: -100, zmax: 100, zmid: 0, colorscale: divergingScale(), xgap: 2, ygap: 2,
+                          text: z.map((row) => row.map((v) => (isNum(v) ? `${v > 0 ? "+" : ""}${v.toFixed(0)}%` : "n/a"))), texttemplate: "%{text}",
+                          textfont: { size: 11, color: cssVar("--text-primary") },
+                          hovertemplate: "%{y}<br>%{x}<br>cumulative %{customdata:.1f}%<extra></extra>", colorbar: { thickness: 10, outlinewidth: 0, ticksuffix: "%" } }],
+       baseLayout({ hovermode: "closest", margin: { l: 150, r: 10, t: 10, b: 70 },
+                    xaxis: { tickfont: { color: cssVar("--text-secondary") }, showgrid: false, side: "bottom" },
+                    yaxis: { autorange: "reversed", tickfont: { color: cssVar("--text-secondary") }, showgrid: false } }));
+  $("phase-table").innerHTML = `<thead><tr><th>Series</th>${D.meta.market_phases.map((p) => `<th class="num" title="${p.start} to ${p.end}">${esc(p.name)}</th>`).join("")}</tr></thead><tbody>` +
+    series.map((s) => `<tr><td>${s === "Market (total return)" ? "<em>" + s + "</em>" : esc(s)}</td>` + phases.map((p) => {
+      const r = get(s, p);
+      return `<td class="num"${r.note ? ` title="${esc(r.note)}"` : ""}>${signed(r.cumulative_pct, 1, "%")}</td>`;
+    }).join("") + "</tr>").join("") + "</tbody>";
+  $("extreme-table").innerHTML = `<thead><tr><th>Signal</th><th>Best 12 months</th><th class="num">Return</th><th>Worst 12 months</th><th class="num">Return</th></tr></thead><tbody>` +
+    SIGNALS.map((s) => {
+      const b = D.extremes.find((r) => r.signal === s && r.window === "best"), w = D.extremes.find((r) => r.signal === s && r.window === "worst");
+      return `<tr><td>${esc(s)}</td><td>${b.start} to ${b.end}</td><td class="num">${signed(b.return_12m_pct, 1, "%")}</td><td>${w.start} to ${w.end}</td><td class="num">${signed(w.return_12m_pct, 1, "%")}</td></tr>`;
+    }).join("") + "</tbody>";
+}
+
+// ---------- footer ----------
+function renderFooter() {
+  const m = D.meta;
+  const ranges = SIGNALS.map((s) => `${s} ${FULL[s].first} to ${FULL[s].last}`).join("; ");
+  $("about").innerHTML = `
+    <p class="caveat">These are paper portfolios: long-short returns before trading costs, shorting costs and taxes, mostly equal-weighted (small stocks count as much as large ones). They are not investable as shown and not investment advice.</p>
+    <p><strong>Data:</strong> Open Source Asset Pricing (Chen and Zimmermann), openassetpricing.com, release ${esc(m.release)} (Hugging Face branch ${esc(m.hf_branch)}, code v2.1.0),
+      original-paper portfolios <code>PredictorPortsFull.parquet</code> and <code>SignalDoc.csv</code>, read with the <code>openassetpricing</code> package ${esc(m.package_version)} on ${esc(m.downloaded_on)}.
+      Benchmarks: our own replicated FF3 (MKT-RF, SMB, HML); Ken French's FF5 and momentum (UMD); AQR's QMJ.</p>
+    <p><strong>Samples:</strong> ${esc(ranges)}. AnnouncementReturn starts in 1971-11 (the first two months had 1 and 13 stocks per leg). Regressions: ${esc(m.reg_window)}. Periods use SignalDoc's sample years (in-sample = Jan of the start year to Dec of the end year; post-publication = after the journal year).</p>
+    <p><strong>Built:</strong> ${esc(m.generated)} by <code>pyCode/SignalDashboard/G_Dashboard.py</code>. Every number here comes from the Stage 3 tables in <code>output/stats_*.csv</code> (checked by <code>H_CheckDashboard.py</code>). Plotly ${esc(m.plotly_version)} ${m.plotly_embedded ? "is embedded in this file" : "loads from the jsDelivr CDN"}.</p>`;
+}
+
+// ---------- boot ----------
+function renderCharts() {
+  renderSignalCharts(currentSignal); renderCompare(); renderCorr(); renderDecay(); renderPhases();
+}
+$("subtitle").textContent = `${SIGNALS.length} published anomalies from Open Source Asset Pricing, release ${D.meta.release}, data to ${D.meta.data_end}`;
+$("signal-select").innerHTML = SIGNALS.map((s) => `<option value="${s}">${s}: ${esc(INFO[s].full_name)}</option>`).join("");
+$("signal-select").addEventListener("change", (e) => selectSignal(e.target.value));
+$("show-all").addEventListener("click", () => { hidden = new Set(); renderCompare(); });
+$("show-none").addEventListener("click", () => { hidden = new Set(SIGNALS); renderCompare(); });
+$("common-start").addEventListener("change", renderCompare);
+renderFooter();
+selectSignal(currentSignal);
+applyTheme();
+</script>
+</body>
+</html>

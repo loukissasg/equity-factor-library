@@ -1,0 +1,5 @@
+# Copy this file to ".env" (same folder) and fill in your WRDS username.
+# The password is NOT stored here: it lives in your pgpass file, created the first time you ran
+#   python -c "import wrds; db = wrds.Connection()"
+# .env is listed in .gitignore, so it is never shared.
+WRDS_USERNAME=your_wrds_username

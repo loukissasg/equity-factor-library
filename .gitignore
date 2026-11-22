@@ -1,0 +1,18 @@
+# Credentials (never commit)
+.env
+
+# Python environment
+.venv/
+__pycache__/
+
+# Data and outputs created by the script
+pyData/
+output/
+
+# Kept local, not published: notes and docs (all Markdown), slides and zip snapshots,
+# the old pyCodecheck/ copy of the code, editor settings
+*.md
+*.pptx
+*.zip
+pyCodecheck/
+.vscode/

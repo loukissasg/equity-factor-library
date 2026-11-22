@@ -1,0 +1,10 @@
+wrds
+pandas
+pyarrow
+numpy
+statsmodels
+matplotlib
+requests
+python-dotenv
+openpyxl
+openassetpricing==0.1.0   # signal dashboard: OpenAP's published portfolios (installs polars)
