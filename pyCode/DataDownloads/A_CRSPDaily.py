@@ -4,11 +4,18 @@ Run:     python DataDownloads/A_CRSPDaily.py   (from pyCode/)
 Inputs:  WRDS crsp.dsf_v2
 Outputs: pyData/Intermediate/crsp_daily/crsp_daily_YYYY.parquet, one file per year
          one row per security (PERMNO) and trading day: permno, permco, dlycaldt,
-         dlyprevdt, dlyret, dlyprc, shrout, dlyprevcap, primaryexch, dlydelflg
+         dlyprevdt, dlyret, dlyprc, shrout, dlyprevcap, dlycumfacshr, primaryexch, dlydelflg
 
 The daily table has ~75M rows for our universe since 1960, so we download one year at a
 time. Each year is saved as soon as it arrives: if the connection drops, a rerun only
-fetches the missing years (unless REFRESH_DOWNLOADS = True).
+fetches the missing years (unless REFRESH_DOWNLOADS = True). A cached year that lacks a
+column we now need (COLUMNS) is fetched again too.
+
+dlycumfacshr is CRSP's cumulative factor to adjust shares for splits and stock
+distributions (not for share issues): shrout x dlycumfacshr is the same number before and
+after a split. DailyMasterTable.add_weights needs it to compare share counts across a
+split (e.g. Citigroup's 1-for-10 reverse split on 9 May 2011: 29.2bn shares x 0.1 before,
+2.92bn x 1.0 after).
 """
 
 import sys
@@ -18,6 +25,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # make config/utils importable
 
 import pandas as pd  # noqa: E402
+import pyarrow.parquet as pq  # noqa: E402
 
 from config import (CRSP_DAILY_DIR, CRSP_END_YEAR, CRSP_START, REFRESH_DOWNLOADS,  # noqa: E402
                     make_folders)
@@ -26,6 +34,8 @@ from utils.wrds_connection import get_wrds_connection  # noqa: E402
 
 LAST_YEAR = CRSP_END_YEAR
 MAX_ATTEMPTS = 3  # per year, if WRDS drops the connection
+COLUMNS = ["permno", "permco", "dlycaldt", "dlyprevdt", "dlyret", "dlyprc", "shrout",
+           "dlyprevcap", "dlycumfacshr", "primaryexch", "dlydelflg"]
 
 # The same universe as the monthly data: ordinary common shares of US firms on NYSE,
 # AMEX or NASDAQ (old shrcd 10/11, exchcd 1/2/3). {t} is the table alias, because the
@@ -46,6 +56,13 @@ def year_file(year):
     return CRSP_DAILY_DIR / f"crsp_daily_{year}.parquet"
 
 
+def is_cached(year):
+    """The year's file exists and has every column in COLUMNS (reads only the schema)."""
+    if not year_file(year).exists():
+        return False
+    return set(COLUMNS) <= set(pq.ParquetFile(year_file(year)).schema_arrow.names)
+
+
 def download_year(db, year):
     # Two kinds of rows:
     #  1. Ordinary trading days that pass the common-stock filter.
@@ -55,8 +72,7 @@ def download_year(db, year):
     #     would silently lose every delisting loss. We keep it if the stock passed the
     #     filter on its last trading day (dlyprevdt), i.e. it was in our universe.
     crsp = db.raw_sql(f"""
-        SELECT d.permno, d.permco, d.dlycaldt, d.dlyprevdt, d.dlyret, d.dlyprc, d.shrout,
-               d.dlyprevcap, d.primaryexch, d.dlydelflg
+        SELECT {", ".join("d." + c for c in COLUMNS)}
         FROM crsp.dsf_v2 d
         WHERE d.dlycaldt BETWEEN '{year}-01-01' AND '{year}-12-31'
           AND (
@@ -70,7 +86,7 @@ def download_year(db, year):
     # Smaller types: the full sample is large, and these ids fit in 32-bit integers.
     crsp["permno"] = crsp["permno"].astype("int32")
     crsp["permco"] = crsp["permco"].astype("int32")
-    for col in ["dlyret", "dlyprc", "shrout", "dlyprevcap"]:
+    for col in ["dlyret", "dlyprc", "shrout", "dlyprevcap", "dlycumfacshr"]:
         crsp[col] = crsp[col].astype("float64")
     return crsp
 
@@ -79,7 +95,7 @@ def main():
     make_folders()
     first_year = int(CRSP_START[:4])
     years = list(range(first_year, LAST_YEAR + 1))
-    to_fetch = [y for y in years if REFRESH_DOWNLOADS or not year_file(y).exists()]
+    to_fetch = [y for y in years if REFRESH_DOWNLOADS or not is_cached(y)]
     print(f"CRSP daily: {len(years) - len(to_fetch)} of {len(years)} years cached, "
           f"downloading {len(to_fetch)}", flush=True)
 

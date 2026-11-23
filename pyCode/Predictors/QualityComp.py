@@ -3,7 +3,9 @@
 Run:     python Predictors/QualityComp.py   (from pyCode/, after OperProf.py)
 Inputs:  pyData/Predictors/OperProf.parquet
          pyData/Intermediate/compustat_annual.parquet, ccm_links.parquet, crsp_monthly_from_daily.parquet
-         pyData/Intermediate/SignalMasterTable.parquet   (returns, June PERMNO)
+         pyData/Intermediate/SignalMasterTable.parquet   (June PERMNO of each firm)
+         pyData/Intermediate/DailyMasterTable/DailyMasterTable_YYYY.parquet   (daily returns)
+         pyData/Intermediate/french_ff3_daily.parquet    (daily RF)
 Outputs: pyData/Predictors/QualityComp.parquet   [permno, yyyymm, QualityComp]
          yyyymm = YYYY06 (the June t sort that uses the signal)
 
@@ -15,8 +17,16 @@ from our own data. It is a simplified version of QMJ, not a replica.
 Components, each measured with data known at the end of June t:
   1. OperProf             fiscal year t-1 (Predictors/OperProf.py)        high = quality
   2. Book leverage lt/at  fiscal year t-1, same CCM link as BMdec        low  = quality
-  3. Return volatility    std of monthly returns, July t-3 to June t     low  = quality
-                          (36 months, at least 24 required)
+  3. Return volatility    std of daily excess returns over the last 252  low  = quality
+                          trading days up to the end of June t (at least 100 required)
+
+Volatility from daily data follows Open Source Asset Pricing, which computes every
+volatility signal from daily returns: RealizedVol (Ang et al. 2006) is the std of daily
+excess returns (ret - rf) over a month; IdioVolAHT uses a 252-trading-day window with at
+least 100 observations. We take RealizedVol's definition (total, not residual, volatility)
+over IdioVolAHT's one-year window: a score held for a whole year should not rest on a
+single month of data. (Until 2026-11-22: std of 36 monthly returns; that version is in
+archive/Predictors/QualityComp.py.)
 
 Combining (as AQR does): each June, rank every stock on each component, turn the ranks
 into z-scores (mean 0, std 1), flip leverage and volatility so that high = safe, and
@@ -29,16 +39,16 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # make config/utils importable
 
-import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
-from config import FIRST_SORT_YEAR, INTERMEDIATE, PREDICTORS, make_folders  # noqa: E402
+from config import (CRSP_END_YEAR, DAILY_MASTER_DIR, FIRST_SORT_YEAR, INTERMEDIATE,  # noqa: E402
+                    MONTHLY_METHOD_REF, PREDICTORS, make_folders)
 from Predictors.BMdec import book_equity, link_to_crsp  # noqa: E402
 from utils.checks import require_unique  # noqa: E402
 from utils.save_predictor import save_predictor  # noqa: E402
 
-VOL_WINDOW = 36   # months of returns for the volatility component
-VOL_MIN_OBS = 24  # minimum returns in the window
+VOL_WINDOW = 252   # trading days of returns for the volatility component (about one year)
+VOL_MIN_OBS = 100  # minimum daily returns in the window (as OSAP's IdioVolAHT)
 
 
 def june_permno(panel):
@@ -65,21 +75,45 @@ def leverage(comp, ccm, crsp, panel):
 
 
 def volatility(panel):
-    """Std of monthly returns over the 36 months up to June t, keyed by June t PERMNO."""
-    # Per firm (PERMCO): the master table has one row per firm-month. The rolling window
-    # counts rows, so it equals 36 calendar months only without gaps; months_spanned
-    # checks that the window really covers at most 36 months.
-    panel = panel.sort_values(["permco", "date"])
-    grouped = panel.groupby("permco")["ret"]
-    panel["vol"] = grouped.transform(lambda r: r.rolling(VOL_WINDOW, min_periods=VOL_MIN_OBS).std())
-    first_date = panel.groupby("permco")["date"].shift(VOL_WINDOW - 1)
-    months_spanned = ((panel["date"].dt.year - first_date.dt.year) * 12
-                      + panel["date"].dt.month - first_date.dt.month + 1)
-    panel.loc[months_spanned > VOL_WINDOW, "vol"] = np.nan
+    """
+    Std of daily excess returns over the last 252 trading days up to the end of June t,
+    for every firm and June t, keyed by June t PERMNO.
+    """
+    rf = pd.read_parquet(INTERMEDIATE / "french_ff3_daily.parquet").set_index("date")["rf"]
+    rows = []
+    for year in range(FIRST_SORT_YEAR, CRSP_END_YEAR + 1):
+        # The window reaches back into the previous calendar year, so read both years.
+        days = pd.concat([
+            pd.read_parquet(DAILY_MASTER_DIR / f"DailyMasterTable_{y}.parquet",
+                            columns=["permco", "date", "ret"])
+            for y in (year - 1, year)])
+        days = days[days["date"] <= pd.Timestamp(f"{year}-06-30")]
 
-    june = panel[panel["date"].dt.month == 6].copy()
-    june["yyyymm"] = june["date"].dt.year * 100 + 6
-    return june[["permno", "yyyymm", "vol"]]
+        # The window is the last 252 *market* trading days, the same calendar dates for
+        # every firm. A firm with gaps simply has fewer returns in it (at least 100 needed).
+        trading_days = days["date"].drop_duplicates().sort_values()
+        window = days[days["date"] >= trading_days.iloc[-VOL_WINDOW]].copy()
+
+        # Excess returns, as OSAP's RealizedVol. Subtracting a (nearly constant) daily RF
+        # hardly changes a standard deviation, but it keeps the definition the same.
+        window["rf"] = window["date"].map(rf)
+        if window["rf"].isna().any():
+            raise ValueError(f"QualityComp: no French RF for some days of the {year} window")
+        window["excess"] = window["ret"] - window["rf"]
+
+        stats = window.groupby("permco")["excess"].agg(vol="std", n_returns="count").reset_index()
+        stats = stats[stats["n_returns"] >= VOL_MIN_OBS]
+        stats["sort_year"] = year
+        rows.append(stats)
+
+    vol = pd.concat(rows, ignore_index=True)
+    # Daily returns are per firm (PERMCO, the largest share class); the signal is stored
+    # under the PERMNO the master table carries for the firm in June, as Size and BMdec.
+    vol = vol.merge(june_permno(panel), on=["permco", "sort_year"], how="inner")
+    vol["yyyymm"] = vol["sort_year"] * 100 + 6
+    print(f"firm-Junes with daily volatility: {len(vol):,}   median daily returns in the "
+          f"window: {vol['n_returns'].median():.0f}")
+    return vol[["permno", "yyyymm", "vol"]]
 
 
 def rank_z(series):
@@ -122,6 +156,26 @@ def main():
     print("Median components by June, every 10th year:")
     med = q.groupby(q["yyyymm"] // 100)[["OperProf", "leverage", "vol"]].median()
     print(med[med.index % 10 == 5].round(3).to_string())
+
+    # How much did the switch to daily volatility change the score? (Frozen copy of the
+    # version with 36 monthly returns, if present.)
+    old_file = MONTHLY_METHOD_REF / "QualityComp.parquet"
+    if old_file.exists():
+        old = pd.read_parquet(old_file)
+        both = q[["permno", "yyyymm", "QualityComp"]].merge(
+            old, on=["permno", "yyyymm"], how="outer", suffixes=("", "_old"), indicator=True)
+        common = both[both["_merge"] == "both"].copy()
+        # Quintile within each June: the 5x5 sort uses NYSE breakpoints, but plain
+        # quintiles are enough to see how many stocks would change group.
+        for column in ["QualityComp", "QualityComp_old"]:
+            common[column + "_q"] = common.groupby("yyyymm")[column].transform(
+                lambda s: pd.qcut(s, 5, labels=False))
+        moved = (common["QualityComp_q"] != common["QualityComp_old_q"]).mean()
+        print(f"\nvs the old score (monthly volatility): firm-Junes in both {len(common):,}, "
+              f"only new {(both['_merge'] == 'left_only').sum():,}, "
+              f"only old {(both['_merge'] == 'right_only').sum():,}")
+        print(f"correlation of scores {common['QualityComp'].corr(common['QualityComp_old']):.3f}, "
+              f"share changing quintile {moved:.1%}")
 
 
 if __name__ == "__main__":

@@ -36,6 +36,8 @@ STAGES = [
         "DataDownloads/L_French25Portfolios.py",
         "DataDownloads/M_FrenchFactorsDaily.py",       # daily RF and daily benchmark
         "DataDownloads/N_French6PortfoliosDaily.py",
+        "DataDownloads/O_French5FactorsDaily.py",      # daily RMW benchmark
+        "DataDownloads/P_French6PortfoliosOPDaily.py",
     ]),
     # DailyMasterTable: firm-days for the daily portfolios, plus a month-end file built
     # from daily data, which SignalMasterTable turns into the firm-month panel the
@@ -47,9 +49,8 @@ STAGES = [
                     "Predictors/QualityComp.py"]),   # QualityComp needs OperProf first
     # FF3: FF3Daily.py calls ff2x3_daily() from Portfolios/FF2x3Daily.py (same June sort,
     # daily returns); FF3Monthly.py compounds those daily portfolios to monthly FF3.
-    # The other factors are still monthly (moving them to daily comes later): they call
-    # ff2x3(signal, sign) from Portfolios/FF2x3.py or size_quality_5x5(signal) from
-    # Portfolios/SizeQuality5x5.py.
+    # RMW and RMW_GP also use ff2x3_daily() and write daily and monthly files themselves;
+    # the SMBQ scripts do the same with size_quality_5x5_daily() (Portfolios/SizeQuality5x5Daily.py).
     ("4. Portfolios and factors", ["Factors/FF3Daily.py",
                                    "Factors/FF3Monthly.py",   # needs FF3Daily.py first
                                    "Factors/RMW.py", "Factors/RMW_GP.py",
@@ -59,6 +60,7 @@ STAGES = [
                        "Validation/CompareDailyMonthly.py",
                        "Validation/CompareFrench.py",   # monthly FF3 (from daily) vs French
                        "Validation/CompareFrenchRMW.py",
+                       "Validation/CompareFrenchRMWDaily.py",
                        "Validation/SMBQAnalysis.py", "Validation/ModelComparison25.py",
                        "Validation/Stage3SlideSummary.py", "Validation/SMBQJunkNeutral.py",
                        "Validation/ModelComparisonQMJ.py",

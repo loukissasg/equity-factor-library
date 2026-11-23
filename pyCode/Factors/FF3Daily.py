@@ -37,12 +37,13 @@ def summary_stats(df):
 def market_return_one_year(year):
     """Value-weighted return of all stocks in our universe, every trading day of one year."""
     days = pd.read_parquet(DAILY_MASTER_DIR / f"DailyMasterTable_{year}.parquet",
-                           columns=["date", "ret", "me_lag"])
-    # Same rule as the portfolios: a return and a weight (ME on the previous trading day).
-    days = days[days["ret"].notna() & days["me_lag"].notna() & (days["me_lag"] > 0)].copy()
-    days["ret_x_weight"] = days["ret"] * days["me_lag"]
+                           columns=["date", "ret", "weight"])
+    # Same rule as the portfolios: a return and a weight (yesterday's price x shares at
+    # the end of last month, see DailyMasterTable.add_weights).
+    days = days[days["ret"].notna() & days["weight"].notna() & (days["weight"] > 0)].copy()
+    days["ret_x_weight"] = days["ret"] * days["weight"]
     grouped = days.groupby("date")
-    return grouped["ret_x_weight"].sum() / grouped["me_lag"].sum()
+    return grouped["ret_x_weight"].sum() / grouped["weight"].sum()
 
 
 def main():

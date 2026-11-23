@@ -4,7 +4,10 @@ Run:     python DailyMasterTable.py   (from pyCode/)
 Inputs:  pyData/Intermediate/crsp_daily/crsp_daily_YYYY.parquet
 Outputs: pyData/Intermediate/DailyMasterTable/DailyMasterTable_YYYY.parquet, one per year
              one row per firm (PERMCO) and trading day: permno, permco, date, ret, me,
-             me_lag, primaryexch, is_nyse (ME in $ thousands)
+             me_lag, weight, primaryexch, is_nyse (ME and weight in $ thousands)
+               me_lag = ME at the start of the return (yesterday's price x shares)
+               weight = yesterday's price x shares at the end of last month: the weight
+                        the daily value-weighted portfolios use (see add_weights)
          pyData/Intermediate/crsp_monthly_from_daily.parquet
              one row per security and month, same columns as the old monthly download
              (permno, permco, mthcaldt, mthret, mthprc, shrout, primaryexch), so the
@@ -28,8 +31,66 @@ LAST_YEAR = CRSP_END_YEAR
 MONTHLY_FILE = INTERMEDIATE / "crsp_monthly_from_daily.parquet"
 
 
+def add_weights(crsp, previous_tail):
+    """
+    Add 'weight_security': yesterday's price x shares outstanding at the end of last month.
+
+    Why not yesterday's full ME (dlyprevcap)? Because ME also jumps when a firm issues
+    shares. QXO Inc. (Jul 2024) went from 0.66m to 342m shares overnight; with
+    yesterday's ME it instantly became 4-7% of the small-growth portfolio and over half
+    of a micro-cap SMBQ cell, moving SMBQ by -6.6 points in one month. With this weight
+    prices still update every day, while share issues and buybacks count from the next
+    month-end, as in the monthly Fama-French method. On the first trading day of a month
+    the weight equals last month's ME exactly. (Decision 2026-11-22, see TEAM_NOTES.)
+
+    Computed from what CRSP gives per security: dlyprevcap = price x shares on dlyprevdt,
+    so  weight = dlyprevcap x (shares at last month-end) / (shares on dlyprevdt).
+
+    Splits: the two share counts must be in the same units. After Citigroup's 1-for-10
+    reverse split on 9 May 2011, yesterday's price is ~$44 but April's share count is the
+    pre-split 29.2bn, so without an adjustment Citigroup's weight was 10x too big (7% of
+    the whole market). We compare split-adjusted shares, shrout x dlycumfacshr (CRSP's
+    cumulative share factor, which changes with splits but not with share issues).
+    previous_tail: each security's last trading-day row of the previous year (permno,
+    dlycaldt, shrout, dlycumfacshr), so January can look back into December.
+    Returns crsp with the new column, and the tail to pass to the next year.
+    """
+    trading = crsp.loc[crsp["dlydelflg"] != "Y", ["permno", "dlycaldt", "shrout", "dlycumfacshr"]].copy()
+    # Split-adjusted shares. If CRSP has no factor (rare), take shares as they are.
+    trading["shares_adj"] = trading["shrout"] * trading["dlycumfacshr"].fillna(1.0)
+    history = pd.concat([previous_tail, trading], ignore_index=True)
+
+    # Shares on the day the return starts from (dlyprevdt), to take dlyprevcap back to a price.
+    shares_prev = (history[["permno", "dlycaldt", "shares_adj"]]
+                   .rename(columns={"dlycaldt": "dlyprevdt", "shares_adj": "shares_prev"}))
+    crsp = crsp.merge(shares_prev, on=["permno", "dlyprevdt"], how="left")
+
+    # Shares on the last trading day of the previous month (month-end shares, as monthly
+    # CRSP reports them). A delisting row counts in the month of its own date.
+    history["month"] = history["dlycaldt"].dt.to_period("M")
+    month_end_shares = (history.sort_values("dlycaldt").groupby(["permno", "month"])["shares_adj"]
+                        .last().rename("shares_month_start").reset_index())
+    month_end_shares["month"] = month_end_shares["month"] + 1   # end of m-1 -> used in m
+    crsp["month"] = crsp["dlycaldt"].dt.to_period("M")
+    crsp = crsp.merge(month_end_shares, on=["permno", "month"], how="left")
+
+    # Both counts are split-adjusted, so the ratio is 1 unless shares were issued or
+    # bought back since the month-end.
+    ratio = crsp["shares_month_start"] / crsp["shares_prev"]
+    crsp["weight_security"] = crsp["dlyprevcap"] * ratio
+    # No month-start shares (the stock's first month in CRSP, e.g. an IPO) or no shares on
+    # dlyprevdt: fall back to yesterday's ME. Such stocks are never in the June-sorted
+    # portfolios in their first month; it only matters for the market return.
+    no_ratio = ratio.isna() | ~np.isfinite(ratio) | (ratio <= 0)
+    crsp.loc[no_ratio, "weight_security"] = crsp.loc[no_ratio, "dlyprevcap"]
+
+    tail = trading.sort_values("dlycaldt").groupby("permno").tail(1)
+    return crsp.drop(columns=["shares_prev", "shares_month_start", "month"]), tail
+
+
 def firm_days(crsp):
-    """One row per firm and day, with the firm's total ME and its ME at the start of the return."""
+    """One row per firm and day, with the firm's total ME, its ME at the start of the
+    return, and its portfolio weight."""
     panel = crsp.rename(columns={"dlycaldt": "date", "dlyret": "ret"})
 
     # --- Market equity of each security ----------------------------------------------------
@@ -39,7 +100,7 @@ def firm_days(crsp):
     panel["me_security"] = panel["dlyprc"].abs() * panel["shrout"]
     panel.loc[panel["me_security"] <= 0, "me_security"] = np.nan
 
-    # --- Weight: ME at the start of the return interval --------------------------------------
+    # --- ME at the start of the return interval, and the portfolio weight --------------------
     # A value-weighted return for day t must use ME *before* day t's return, otherwise it is
     # look-ahead. CRSP gives it directly: dlyprevcap is ME on dlyprevdt, the date the
     # return starts from. Usually that is the previous trading day, but it also does the
@@ -48,11 +109,11 @@ def firm_days(crsp):
     #     multi-day return), and dlyprevcap is ME at the start of that gap;
     #   - the delisting row: dated the day after the last trade, dlyprevcap is ME on the
     #     last trading day.
-    # Daily weights from yesterday's ME are what a buy-and-hold portfolio drifts to anyway,
-    # so this is the same as holding the month-start weights (apart from dividends and
-    # share issues). Ken French doesn't document which of the two he uses.
+    # The weight is the same price but with last month-end's shares (add_weights), so a
+    # share issue does not change a stock's weight until the next month-end.
     panel["me_lag_security"] = panel["dlyprevcap"]
     panel.loc[panel["me_lag_security"] <= 0, "me_lag_security"] = np.nan
+    panel.loc[~(panel["weight_security"] > 0), "weight_security"] = np.nan
 
     # --- Aggregate ME to the firm (PERMCO) -------------------------------------------------------
     # As in the monthly data: size is a property of the firm, so all share classes
@@ -60,6 +121,7 @@ def firm_days(crsp):
     by_firm_day = panel.groupby(["permco", "date"])
     panel["me"] = by_firm_day["me_security"].transform("sum", min_count=1)
     panel["me_lag"] = by_firm_day["me_lag_security"].transform("sum", min_count=1)
+    panel["weight"] = by_firm_day["weight_security"].transform("sum", min_count=1)
 
     # Keep one row per firm-day: the class with the largest ME, carrying the firm's total.
     # Its return stands in for the firm's. Missing ME sorts last, so a firm whose only row
@@ -70,7 +132,8 @@ def firm_days(crsp):
 
     # NYSE flag, for the June breakpoints.
     panel["is_nyse"] = panel["primaryexch"] == "N"
-    return panel[["permno", "permco", "date", "ret", "me", "me_lag", "primaryexch", "is_nyse"]]
+    return panel[["permno", "permco", "date", "ret", "me", "me_lag", "weight", "primaryexch",
+                  "is_nyse"]]
 
 
 def month_pieces(crsp):
@@ -140,8 +203,15 @@ def main():
 
     yearly = []
     all_returns, all_month_ends = [], []
+    # Each security's last trading day of the previous year, for January's look-back.
+    previous_tail = pd.DataFrame({"permno": pd.Series(dtype="int32"),
+                                  "dlycaldt": pd.Series(dtype="datetime64[ns]"),
+                                  "shrout": pd.Series(dtype="float64"),
+                                  "dlycumfacshr": pd.Series(dtype="float64"),
+                                  "shares_adj": pd.Series(dtype="float64")})
     for year in years:
         crsp = pd.read_parquet(CRSP_DAILY_DIR / f"crsp_daily_{year}.parquet")
+        crsp, previous_tail = add_weights(crsp, previous_tail)
 
         panel = firm_days(crsp)
         require_unique(panel, ["permco", "date"], f"DailyMasterTable {year}")
@@ -151,13 +221,22 @@ def main():
         all_returns.append(returns)
         all_month_ends.append(month_end)
 
-        usable = panel["ret"].notna() & panel["me_lag"].notna()
+        usable = panel["ret"].notna() & panel["weight"].notna()
+        # How often does the weight differ from yesterday's ME by more than 1%? Only on
+        # days after a share-count change within the month, so this should be small.
+        ratio = panel["weight"] / panel["me_lag"]
+        differs = (ratio - 1).abs() > 0.01
+        # A factor of 2 or more within a month should only come from a big share issue or
+        # buyback (QXO), never from a split (the weights are split-adjusted).
+        far_off = (ratio > 2) | (ratio < 0.5)
         row = {
             "year": year,
             "security_days": len(crsp),
             "firm_days": len(panel),
             "firms": panel["permco"].nunique(),
             "usable_%": round(100 * usable.mean(), 2),   # has a return and a weight
+            "weight_vs_me_lag_>1%_%": round(100 * differs.mean(), 2),
+            "factor_2_off_days": int(far_off.sum()),
         }
         if year % 10 == 0 or year == LAST_YEAR:
             share, n = check_prevcap(crsp)
@@ -191,7 +270,8 @@ def main():
     # --- Sanity checks ----------------------------------------------------------------------------
     yearly = pd.DataFrame(yearly)
     print("\nEvery 5th year: security-days, firm-days (after PERMCO aggregation), firms, "
-          "share of firm-days with return and weight; dlyprevcap check every 10th year")
+          "share of firm-days with return and weight, share where the weight differs from "
+          "yesterday's ME by > 1%; dlyprevcap check every 10th year")
     show = yearly[(yearly["year"] % 5 == 0) | (yearly["year"] == LAST_YEAR)]
     print(show.to_string(index=False, na_rep=""))
     print(f"total firm-days: {yearly['firm_days'].sum():,}")

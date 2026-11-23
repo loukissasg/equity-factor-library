@@ -22,6 +22,9 @@ ENV_FILE = PROJECT_ROOT / ".env"           # WRDS_USERNAME (never committed)
 # frozen on 2026-11-21. Used only to compare daily vs monthly; the scripts that made
 # them are in pyCode/archive/.
 MONTHLY_PIPELINE_REF = DATA_ROOT / "reference" / "monthly_pipeline"
+# RMW/RMW_GP portfolios and factors from the *monthly method* on the monthly file built
+# from daily data (the last run before RMW moved to daily returns, 2026-11-22).
+MONTHLY_METHOD_REF = DATA_ROOT / "reference" / "monthly_method_20261122"
 
 # --- Sample ----------------------------------------------------------------------------
 # The first portfolios are formed in June 1963 (Compustat coverage becomes reliable).

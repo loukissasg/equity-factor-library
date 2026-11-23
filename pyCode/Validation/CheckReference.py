@@ -13,7 +13,8 @@ existing one. After any code change, every factor with a reference copy must be 
 up to floating-point noise (1e-10). References:
     FF3Daily.parquet          daily FF3, accepted after Stage 6 of the move to daily data
     FF3.parquet               monthly FF3 compounded from daily, accepted at the same time
-    RMW.parquet               RMW (still monthly), re-accepted at the same time
+    RMWDaily.parquet          daily RMW (moved to daily data after Stage 6)
+    RMW.parquet               monthly RMW, compounded from daily since then
     SMBQ_JunkNeutral.parquet  only the smbq_comp column is checked (SMBQ_Comp was chosen as
                               the best version; the other two columns are exploratory)
 The references from before the move to daily data are frozen in
@@ -39,6 +40,7 @@ REFERENCE = DATA_ROOT / "reference"
 CHECKS = {
     "FF3Daily": ["mkt_rf", "smb", "hml", "mkt", "rf"],
     "FF3": ["mkt_rf", "smb", "hml", "mkt", "rf"],
+    "RMWDaily": ["rmw", "smb_op"],
     "RMW": ["rmw", "smb_op"],
     "SMBQ_JunkNeutral": ["smbq_comp"],
 }

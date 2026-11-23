@@ -9,7 +9,7 @@ Inputs:  pyData/Predictors/Size.parquet, <signal>.parquet   (via the June sort i
 Outputs: pyData/Portfolios/FF2x3Daily_<signal>.parquet   daily: SL SN SH BL BN BH smb spread
          pyData/Portfolios/FF2x3Daily_<signal>_assignments.parquet   one row per firm and June
          pyData/Portfolios/FF2x3Daily_<signal>_holdings.parquet      per day and portfolio:
-             number of stocks and total weight (ME, $ thousands)
+             number of stocks and total weight ($ thousands)
 
 What changes from the monthly version, and what doesn't:
   - The sort is *identical*. The portfolios are formed once a year in June, from annual
@@ -17,6 +17,11 @@ What changes from the monthly version, and what doesn't:
     from FF2x3.py unchanged. Same NYSE breakpoints, same six portfolios, same stocks.
   - Only the return step is new: instead of one value-weighted return per month, we
     compute one per trading day, held July t to June t+1 as before.
+  - Weights: yesterday's price x shares outstanding at the end of last month (the
+    'weight' column of the DailyMasterTable). Prices update daily; share issues count
+    from the next month-end, so a firm cannot jump to a huge weight mid-month (QXO,
+    July 2024). On the first day of each month the weight equals last month's ME, the
+    monthly Fama-French weight.
   - The daily panel (~73M firm-days) is too big for memory, so returns are computed one
     year at a time from the yearly DailyMasterTable files.
 """
@@ -30,14 +35,15 @@ import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
 from config import (CRSP_END_YEAR, DAILY_MASTER_DIR, FIRST_SORT_YEAR,  # noqa: E402
-                    MONTHLY_PIPELINE_REF, PORTFOLIO_NAMES, PORTFOLIOS, PREDICTORS, make_folders)
+                    MONTHLY_METHOD_REF, MONTHLY_PIPELINE_REF, PORTFOLIO_NAMES, PORTFOLIOS,
+                    PREDICTORS, make_folders)
 from Portfolios.FF2x3 import assign_portfolios, eligible_stocks, nyse_breakpoints  # noqa: E402
 
 
 def daily_returns_one_year(year, assignments):
     """Value-weighted daily returns of the six portfolios for the trading days of one calendar year."""
     days = pd.read_parquet(DAILY_MASTER_DIR / f"DailyMasterTable_{year}.parquet",
-                           columns=["permco", "date", "ret", "me_lag", "primaryexch"])
+                           columns=["permco", "date", "ret", "weight", "primaryexch"])
 
     # Each day belongs to the most recent June sort: July-December to this year's sort,
     # January-June to last year's. Same rule as the monthly version.
@@ -50,24 +56,55 @@ def daily_returns_one_year(year, assignments):
     #   - a day with no trade and no quote has no return; CRSP books the move over the gap
     #     on the next trading day, so the stock skips the gap day and nothing is lost;
     #   - the delisting row (primaryexch 'X', dated the day after the last trade) carries
-    #     the delisting return and ME on the last trading day as its weight. Keeping it is
-    #     what stops delisting losses from silently disappearing.
-    days = days[days["ret"].notna() & days["me_lag"].notna() & (days["me_lag"] > 0)]
+    #     the delisting return, weighted with the price of the last trading day. Keeping it
+    #     is what stops delisting losses from silently disappearing.
+    days = days[days["ret"].notna() & days["weight"].notna() & (days["weight"] > 0)]
 
-    # Weight = ME at the start of the return (the previous trading day, from dlyprevcap).
-    # Today's ME already contains today's return, so using it would be look-ahead.
-    days["ret_x_weight"] = days["ret"] * days["me_lag"]
+    # Weight = price at the start of the return (yesterday) x shares at last month-end.
+    # Today's price already contains today's return, so using it would be look-ahead.
+    days["ret_x_weight"] = days["ret"] * days["weight"]
     grouped = days.groupby(["date", "portfolio"])
-    returns = (grouped["ret_x_weight"].sum() / grouped["me_lag"].sum()).unstack()
+    returns = (grouped["ret_x_weight"].sum() / grouped["weight"].sum()).unstack()
 
-    holdings = grouped.agg(n_stocks=("permco", "count"), total_me_lag=("me_lag", "sum")).reset_index()
+    holdings = grouped.agg(n_stocks=("permco", "count"), total_weight=("weight", "sum")).reset_index()
     n_delisting_rows = int((days["primaryexch"] == "X").sum())
     return returns, holdings, n_delisting_rows
 
 
 def compound_to_months(daily):
-    """Monthly returns from daily returns: (1 + r1)(1 + r2)... - 1 within each month."""
-    return np.expm1(np.log1p(daily).groupby(daily.index.to_period("M")).sum())
+    """
+    Monthly returns from daily returns: (1 + r1)(1 + r2)... - 1 within each month.
+    A month with a missing daily return (e.g. an empty 5x10 cell) is missing as a whole:
+    pandas' sum would otherwise skip the gap, i.e. silently count that day as 0%.
+    """
+    months = daily.index.to_period("M")
+    compounded = np.expm1(np.log1p(daily).groupby(months).sum())
+    days_with_return = daily.notna().groupby(months).sum()
+    trading_days = daily.groupby(months).size()
+    return compounded.where(days_with_return.eq(trading_days, axis=0))
+
+
+def monthly_portfolios(p_daily, sign):
+    """
+    Monthly version of ff2x3_daily's output: each of the six portfolios compounded to a
+    monthly return, then smb and spread formed from the *monthly* portfolios. (A
+    long-short factor is a difference of portfolios, and compounding a difference is not
+    the same as the difference of the compounded portfolios.) Month-end dates.
+    """
+    p = compound_to_months(p_daily[PORTFOLIO_NAMES])
+    p["smb"] = (p["SL"] + p["SN"] + p["SH"]) / 3 - (p["BL"] + p["BN"] + p["BH"]) / 3
+    p["spread"] = sign * ((p["SH"] + p["BH"]) / 2 - (p["SL"] + p["BL"]) / 2)
+    p.index = p.index.to_timestamp(how="end").normalize()
+    p.index.name = "date"
+    return p
+
+
+def frozen_monthly_file(file_name):
+    """The monthly-method version of a portfolio file, if one was frozen (else None)."""
+    for folder in [MONTHLY_PIPELINE_REF, MONTHLY_METHOD_REF]:
+        if (folder / file_name).exists():
+            return folder / file_name
+    return None
 
 
 def ff2x3_daily(signal_name, sign):
@@ -155,10 +192,10 @@ def ff2x3_daily(signal_name, sign):
     print("Mean daily return (basis points) and annualized std (%, 252 days), full sample:")
     print(stats.T.to_string())
 
-    # Same stocks in the same portfolios as the old monthly pipeline (frozen copy, if it
+    # Same stocks in the same portfolios as the old monthly sort (frozen copy, if one
     # exists for this signal)?
-    monthly_assignments_file = MONTHLY_PIPELINE_REF / f"FF2x3_{signal_name}_assignments.parquet"
-    if monthly_assignments_file.exists():
+    monthly_assignments_file = frozen_monthly_file(f"FF2x3_{signal_name}_assignments.parquet")
+    if monthly_assignments_file is not None:
         old = pd.read_parquet(monthly_assignments_file, columns=["permco", "sort_year", "portfolio"])
         both = assignments.merge(old, on=["permco", "sort_year"], how="outer",
                                  suffixes=("", "_monthly"), indicator=True)
@@ -168,8 +205,8 @@ def ff2x3_daily(signal_name, sign):
 
     # Quick check against the monthly pipeline (full comparison in Stage 5): compound each
     # daily portfolio to months and compare with the monthly portfolio returns.
-    monthly_file = MONTHLY_PIPELINE_REF / f"FF2x3_{signal_name}.parquet"
-    if monthly_file.exists():
+    monthly_file = frozen_monthly_file(f"FF2x3_{signal_name}.parquet")
+    if monthly_file is not None:
         monthly = pd.read_parquet(monthly_file)[PORTFOLIO_NAMES]
         monthly.index = monthly.index.to_period("M")
         from_daily = compound_to_months(p[PORTFOLIO_NAMES])

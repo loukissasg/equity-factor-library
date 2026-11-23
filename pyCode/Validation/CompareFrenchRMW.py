@@ -1,8 +1,9 @@
 # ABOUTME: Validates our profitability factors (RMW from OperProf, RMW_GP from GP) against Ken French's RMW.
 """
 Run:     python Validation/CompareFrenchRMW.py   (from pyCode/)
-Inputs:  pyData/Factors/RMW.parquet, RMW_GP.parquet
-         pyData/Portfolios/FF2x3_OperProf.parquet, FF2x3_OperProf_holdings.parquet
+Inputs:  pyData/Factors/RMW.parquet, RMW_GP.parquet   (monthly, compounded from daily)
+         pyData/Portfolios/FF2x3Daily_OperProf_monthly.parquet   (six portfolios, monthly)
+         pyData/Portfolios/FF2x3Daily_OperProf_holdings.parquet  (stocks per portfolio, daily)
          pyData/Intermediate/french_ff5.parquet, french_6_portfolios_op.parquet
 Outputs: output/rmw_summary.csv                correlation, mean, std, Sharpe, regression
          output/rmw_correlation_by_period.csv  correlation in three sub-periods
@@ -129,7 +130,7 @@ def main():
     # --- The six size x OP portfolios, one by one -------------------------------------------------
     # As for HML: RMW = 1/2 (SH + BH) - 1/2 (SL + BL), so a gap in RMW must come from one
     # of four portfolios. This shows which.
-    mine_6 = pd.read_parquet(PORTFOLIOS / "FF2x3_OperProf.parquet")[PORTFOLIO_NAMES]
+    mine_6 = pd.read_parquet(PORTFOLIOS / "FF2x3Daily_OperProf_monthly.parquet")[PORTFOLIO_NAMES]
     french_6 = pd.read_parquet(INTERMEDIATE / "french_6_portfolios_op.parquet")
     french_returns = french_6[french_6["table"] == "vw_return"].set_index("date")[PORTFOLIO_NAMES]
     common = mine_6.index.intersection(french_returns.index)
@@ -144,13 +145,20 @@ def main():
     print("\nOur size x OP portfolios vs French's (L = weak, H = robust profitability):")
     print(match.round(3).T.to_string())
 
-    # Number of firms: tells us whether our universe is as large as French's.
-    holdings = pd.read_parquet(PORTFOLIOS / "FF2x3_OperProf_holdings.parquet")
+    # Number of firms: tells us whether our universe is as large as French's. Our counts
+    # are daily; the first trading day of July is the start of the holding year, as
+    # French's July count is.
+    holdings = pd.read_parquet(PORTFOLIOS / "FF2x3Daily_OperProf_holdings.parquet")
     mine_n = holdings.pivot(index="date", columns="portfolio", values="n_stocks")[PORTFOLIO_NAMES]
+    first_july_days = mine_n[(mine_n.index.month == 7) & (mine_n.index.year % 5 == 0)]
+    first_july_days = first_july_days.groupby(first_july_days.index.year).head(1)
+    first_july_days.index = first_july_days.index.year
     french_n = french_6[french_6["table"] == "n_firms"].set_index("date")[PORTFOLIO_NAMES]
-    julys = [d for d in mine_n.index if d.month == 7 and d.year % 5 == 0 and d in french_n.index]
-    contents = pd.concat({"n_mine": mine_n.loc[julys], "n_french": french_n.loc[julys]}, axis=1)
-    contents.index = contents.index.year
+    french_july = french_n[french_n.index.month == 7]
+    french_july.index = french_july.index.year
+    years = first_july_days.index.intersection(french_july.index)
+    contents = pd.concat({"n_mine": first_july_days.loc[years],
+                          "n_french": french_july.loc[years]}, axis=1)
     contents.to_csv(OUTPUT / "rmw_portfolio_contents.csv")
     print("\nNumber of firms in July, ours vs French:")
     print(contents.astype("Int64").to_string())

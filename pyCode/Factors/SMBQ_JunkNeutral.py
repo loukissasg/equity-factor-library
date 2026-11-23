@@ -1,11 +1,13 @@
-# ABOUTME: Three more junk-neutral versions of SMBQ (quality deciles, dropping the junk quintile, composite quality score).
+# ABOUTME: Three more junk-neutral versions of SMBQ (quality deciles, dropping the junk quintile, composite quality score), daily and monthly.
 """
 Run:     python Factors/SMBQ_JunkNeutral.py   (from pyCode/, after Factors/SMBQ.py and
          Predictors/QualityComp.py)
-Inputs:  pyData/Portfolios/SizeQuality5x5_OperProf.parquet   (written by Factors/SMBQ.py)
+Inputs:  pyData/Portfolios/SizeQuality5x5Daily_OperProf.parquet, ..._monthly.parquet
+             (written by Factors/SMBQ.py)
          pyData/Predictors/Size.parquet, BMdec.parquet, OperProf.parquet, QualityComp.parquet
-Outputs: pyData/Portfolios/SizeQuality5x10_OperProf*.parquet, SizeQuality5x5_QualityComp*.parquet
-         pyData/Factors/SMBQ_JunkNeutral.parquet   monthly smbq_d10, smbq_exq1, smbq_comp
+Outputs: pyData/Portfolios/SizeQuality5x10Daily_OperProf*.parquet, SizeQuality5x5Daily_QualityComp*.parquet
+         pyData/Factors/SMBQ_JunkNeutralDaily.parquet   daily smbq_d10, smbq_exq1, smbq_comp
+         pyData/Factors/SMBQ_JunkNeutral.parquet        the same, monthly (portfolios compounded)
 
 Why: the main SMBQ (5 size x 5 OperProf quintiles) stayed short quality. Two reasons
 (see TEAM_NOTES Section 10): (1) the junk quintile Q1 has no lower limit, and small
@@ -28,45 +30,51 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # make config/util
 import pandas as pd  # noqa: E402
 
 from config import FACTORS, PORTFOLIOS, make_folders  # noqa: E402
-from Portfolios.SizeQuality5x5 import size_quality_5x5  # noqa: E402
+from Factors.SMBQ import summary  # noqa: E402
+from Portfolios.SizeQuality5x5Daily import size_quality_5x5_daily  # noqa: E402
 
 
 def small_minus_big(p, quality_groups):
-    """Equal-weighted average across the given quality groups of S1Qq - S5Qq."""
+    """Equal-weighted average across the given quality groups of S1Qq - S5Qq (any frequency)."""
     spreads = pd.DataFrame({q: p[f"S1Q{q}"] - p[f"S5Q{q}"] for q in quality_groups})
-    # skipna=False: an empty cell makes the month missing instead of silently averaging fewer.
+    # skipna=False: an empty cell makes the day (month) missing instead of silently
+    # averaging fewer groups.
     return spreads.mean(axis=1, skipna=False)
 
 
 def main():
     make_folders()
-    factors = pd.DataFrame()
+    daily, monthly = pd.DataFrame(), pd.DataFrame()
 
     # --- 1. Quality deciles -------------------------------------------------------------------
-    p10 = size_quality_5x5("OperProf", quality_groups=10)
-    factors["smbq_d10"] = small_minus_big(p10, range(1, 11))
+    p10_daily, p10_monthly = size_quality_5x5_daily("OperProf", quality_groups=10)
+    daily["smbq_d10"] = small_minus_big(p10_daily, range(1, 11))
+    monthly["smbq_d10"] = small_minus_big(p10_monthly, range(1, 11))
 
     # --- 2. Drop the junk quintile --------------------------------------------------------------
     # Same 25 portfolios as the main SMBQ (read from disk, not rebuilt).
-    p5 = pd.read_parquet(PORTFOLIOS / "SizeQuality5x5_OperProf.parquet")
-    factors["smbq_exq1"] = small_minus_big(p5, range(2, 6))
+    p5_daily = pd.read_parquet(PORTFOLIOS / "SizeQuality5x5Daily_OperProf.parquet")
+    p5_monthly = pd.read_parquet(PORTFOLIOS / "SizeQuality5x5Daily_OperProf_monthly.parquet")
+    daily["smbq_exq1"] = small_minus_big(p5_daily, range(2, 6))
+    monthly["smbq_exq1"] = small_minus_big(p5_monthly, range(2, 6))
 
     # --- 3. Composite quality score ------------------------------------------------------------------
-    pc = size_quality_5x5("QualityComp")
-    factors["smbq_comp"] = small_minus_big(pc, range(1, 6))
+    pc_daily, pc_monthly = size_quality_5x5_daily("QualityComp")
+    daily["smbq_comp"] = small_minus_big(pc_daily, range(1, 6))
+    monthly["smbq_comp"] = small_minus_big(pc_monthly, range(1, 6))
 
-    factors.index.name = "date"
-    factors.to_parquet(FACTORS / "SMBQ_JunkNeutral.parquet")
+    daily.index.name = monthly.index.name = "date"
+    daily.to_parquet(FACTORS / "SMBQ_JunkNeutralDaily.parquet")
+    monthly.to_parquet(FACTORS / "SMBQ_JunkNeutral.parquet")
 
     # --- Sanity checks -----------------------------------------------------------------------
-    print(f"\nmonths: {len(factors)}   dates: {factors.index.min().date()} to "
-          f"{factors.index.max().date()}   missing months: {factors.isna().sum().to_dict()}")
-    stats = pd.DataFrame({
-        "mean_annual_%": factors.mean() * 12 * 100,
-        "std_annual_%": factors.std() * 12 ** 0.5 * 100,
-        "sharpe": factors.mean() / factors.std() * 12 ** 0.5,
-    }).round(2)
-    print(stats.to_string())
+    print(f"\n{len(daily):,} days, {len(monthly)} months, {monthly.index.min().date()} to "
+          f"{monthly.index.max().date()}   missing days: {daily.isna().sum().to_dict()}   "
+          f"missing months: {monthly.isna().sum().to_dict()}")
+    print("daily (252 days):")
+    print(summary(daily, 252).to_string())
+    print("monthly (12 months):")
+    print(summary(monthly, 12).to_string())
 
 
 if __name__ == "__main__":
